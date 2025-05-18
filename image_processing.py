@@ -1,66 +1,79 @@
 import cv2
 import numpy as np
-import torch
+import pytesseract
+from PIL import Image
 
-def detect_watermark(img, model):
-    # Подготовка изображения для нейронки
-    img_resized = cv2.resize(img, (256, 256))
-    img_tensor = torch.from_numpy(img_resized.transpose(2, 0, 1)).float() / 255.0
-    img_tensor = img_tensor.unsqueeze(0)
-    with torch.no_grad():
-        coords = model(img_tensor)
-    x1, y1, x2, y2 = coords[0].numpy()
-    
-    # Масштабирование координат
-    x1 = int(x1 * img.shape[1] / 256)
-    y1 = int(y1 * img.shape[0] / 256)
-    x2 = int(x2 * img.shape[1] / 256)
-    y2 = int(y2 * img.shape[0] / 256)
+# Укажите путь к Tesseract, если требуется (например, на Windows)
+# pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
-    # Уточнение области с помощью анализа контуров
+def detect_watermark(img):
+    # Конвертация в градации серого и бинаризация
     gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
     _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+
+    # Поиск контуров
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
-    # Находим контур, ближайший к предсказанной области
-    best_contour = None
-    min_dist = float('inf')
+    # Фильтрация контуров по размеру (предполагаем, что водяной знак не слишком маленький)
+    watermark_contours = []
     for contour in contours:
         x, y, w, h = cv2.boundingRect(contour)
-        cx, cy = x + w // 2, y + h // 2
-        center_pred = ((x1 + x2) // 2, (y1 + y2) // 2)
-        dist = ((cx - center_pred[0]) ** 2 + (cy - center_pred[1]) ** 2) ** 0.5
-        if dist < min_dist:
-            min_dist = dist
-            best_contour = contour
+        if 50 < w < img.shape[1] * 0.5 and 20 < h < img.shape[0] * 0.5:
+            watermark_contours.append((x, y, w, h))
 
-    if best_contour is not None:
-        x, y, w, h = cv2.boundingRect(best_contour)
-        x1, y1, x2, y2 = x, y, x + w, y + h
+    # Попытка обнаружения текста с помощью Tesseract
+    try:
+        text_data = pytesseract.image_to_data(Image.fromarray(img), output_type=pytesseract.Output.DICT)
+        for i, conf in enumerate(text_data['conf']):
+            if int(conf) > 60:  # Высокая уверенность
+                x, y, w, h = (text_data['left'][i], text_data['top'][i],
+                             text_data['width'][i], text_data['height'][i])
+                watermark_contours.append((x, y, w, h))
+    except:
+        pass  # Если Tesseract не работает, продолжаем с контурами
 
-    return x1, y1, x2, y2
+    # Если контуры найдены, выбираем самый вероятный
+    if watermark_contours:
+        x, y, w, h = max(watermark_contours, key=lambda c: c[2] * c[3])  # Берем самый большой
+        return x, y, x + w, y + h
+    else:
+        # Если ничего не найдено, возвращаем пустую область
+        return 0, 0, 0, 0
 
 def remove_watermark(img, x1, y1, x2, y2):
+    if x1 == x2 or y1 == y2:
+        return img  # Ничего не найдено, возвращаем оригинал
+
     # Убедимся, что координаты валидны
     x1, y1 = max(0, x1), max(0, y1)
     x2, y2 = min(img.shape[1], x2), min(img.shape[0], y2)
-    
-    # Создаем маску для области водяного знака
+
+    # Создаем маску
     mask = np.zeros(img.shape[:2], dtype=np.uint8)
     mask[y1:y2, x1:x2] = 255
-    
-    # Используем inpainting для удаления водяного знака
-    result = cv2.inpaint(img, mask, inpaintRadius=5, flags=cv2.INPAINT_NS)
-    return result
 
-def process_image(img_path, model, manual_coords=None):
+    # Улучшенное inpainting с учетом текстуры
+    # Сначала применяем размытие для подготовки
+    blurred = cv2.GaussianBlur(img, (5, 5), 0)
+    # Используем Telea для начального заполнения
+    inpainted = cv2.inpaint(img, mask, inpaintRadius=5, flags=cv2.INPAINT_TELEA)
+    
+    # Постобработка: восстанавливаем текстуру
+    texture = cv2.subtract(img, blurred)
+    result = cv2.add(inpainted, texture[y1:y2, x1:x2])
+
+    # Копируем восстановленную область в оригинальное изображение
+    img[y1:y2, x1:x2] = result
+    return img
+
+def process_image(img_path, manual_coords=None):
     img = cv2.imread(img_path)
     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     
     if manual_coords:
         x1, y1, x2, y2 = manual_coords
     else:
-        x1, y1, x2, y2 = detect_watermark(img, model)
+        x1, y1, x2, y2 = detect_watermark(img)
     
     processed_img = remove_watermark(img, x1, y1, x2, y2)
     return processed_img

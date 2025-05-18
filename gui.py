@@ -4,17 +4,12 @@ from PIL import Image, ImageTk
 import os
 from threading import Thread
 from image_processing import process_image
-from neural_network import WatermarkDetectorCNN
 
 class WatermarkRemoverApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Watermark Remover")
-        self.root.geometry("1000x700")  # Увеличил высоту окна
-
-        # Модель нейронной сети
-        self.model = WatermarkDetectorCNN()
-        self.model.eval()
+        self.root.geometry("1200x700")
 
         # Переменные
         self.image_paths = []
@@ -44,32 +39,27 @@ class WatermarkRemoverApp:
         tk.Radiobutton(self.root, text="Автоматическое удаление", variable=self.mode, value="auto").pack()
         tk.Radiobutton(self.root, text="Ручное удаление", variable=self.mode, value="manual").pack()
 
+        # Основной фрейм для предпросмотра и списка
+        main_frame = tk.Frame(self.root)
+        main_frame.pack(pady=10, fill=tk.BOTH, expand=True)
+
         # Фрейм для предпросмотра
-        preview_frame = tk.Frame(self.root)
-        preview_frame.pack(pady=10)
+        preview_frame = tk.Frame(main_frame)
+        preview_frame.pack(side=tk.LEFT, padx=10)
 
         # Канвас для исходного изображения
         self.canvas = tk.Canvas(preview_frame, width=300, height=300, bg="white")
-        self.canvas.pack(side=tk.LEFT, padx=10)
+        self.canvas.pack(pady=5)
         self.canvas.bind("<Button-1>", self.start_selection)
         self.canvas.bind("<B1-Motion>", self.update_selection)
         self.canvas.bind("<ButtonRelease-1>", self.end_selection)
 
         # Канвас для обработанного изображения
         self.canvas_processed = tk.Canvas(preview_frame, width=300, height=300, bg="white")
-        self.canvas_processed.pack(side=tk.LEFT, padx=10)
+        self.canvas_processed.pack(pady=5)
 
-        # Прогресс-бары
-        self.total_progress = ttk.Progressbar(self.root, length=300, mode="determinate")
-        self.total_progress.pack(pady=5)
-        self.image_progress = ttk.Progressbar(self.root, length=300, mode="determinate")
-        self.image_progress.pack(pady=5)
-
-        # Кнопка обработки
-        tk.Button(self.root, text="Удалить водяные знаки", command=self.process_images).pack(pady=10)
-
-        # Фрейм для анализа папки
-        folder_frame = tk.Frame(self.root)
+        # Фрейм для анализа папки (справа от предпросмотра)
+        folder_frame = tk.Frame(main_frame)
         folder_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=10)
 
         # Кнопка анализа папки
@@ -92,11 +82,20 @@ class WatermarkRemoverApp:
         self.image_list_canvas.create_window((0, 0), window=self.image_list_frame, anchor="nw")
         self.image_list_frame.bind("<Configure>", lambda e: self.image_list_canvas.configure(scrollregion=self.image_list_canvas.bbox("all")))
 
+        # Прогресс-бары
+        self.total_progress = ttk.Progressbar(self.root, length=300, mode="determinate")
+        self.total_progress.pack(pady=5)
+        self.image_progress = ttk.Progressbar(self.root, length=300, mode="determinate")
+        self.image_progress.pack(pady=5)
+
+        # Кнопка обработки
+        tk.Button(self.root, text="Удалить водяные знаки", command=self.process_images).pack(pady=10)
+
     def select_input_folder(self):
         folder = filedialog.askdirectory()
         if folder:
             self.input_folder = folder
-            self.analyze_folder()
+            # Не анализируем папку автоматически
 
     def select_output_folder(self):
         folder = filedialog.askdirectory()
@@ -191,7 +190,7 @@ class WatermarkRemoverApp:
                 self.load_image(i)  # Обновляем предпросмотр исходного изображения
 
                 if self.mode.get() == "auto":
-                    processed_img = process_image(img_path, self.model)
+                    processed_img = process_image(img_path)
                 else:
                     if self.selection:
                         x1, y1, x2, y2 = self.selection
@@ -201,7 +200,7 @@ class WatermarkRemoverApp:
                         y1 = int(y1 * img.height / 300)
                         x2 = int(x2 * img.width / 300)
                         y2 = int(y2 * img.height / 300)
-                        processed_img = process_image(img_path, self.model, manual_coords=(x1, y1, x2, y2))
+                        processed_img = process_image(img_path, manual_coords=(x1, y1, x2, y2))
                     else:
                         continue
 
